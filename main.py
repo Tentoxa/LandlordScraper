@@ -1,3 +1,5 @@
+import time
+
 from curl_cffi import requests
 from fake_headers import Headers
 from bs4 import BeautifulSoup
@@ -104,15 +106,28 @@ def parse_address_details(html_content):
 
 def investigate_address(full_address: str, simple_address: str, session: requests.Session, headers: dict):
     encoded_address = urllib.parse.quote_plus(full_address)
-    response = session.post("https://www.landlordregistrationscotland.gov.uk/search/registration/property",
-                            data=f"selectedAddress="
-                                 f"{encoded_address}",
-                            headers=headers)
+
+    i = 0
+    while i < 3:
+        try:
+            response = session.post("https://www.landlordregistrationscotland.gov.uk/search/registration/property",
+                                    data=f"selectedAddress="
+                                         f"{encoded_address}",
+                                    headers=headers)
+            break
+        except requests.exceptions.Timeout:
+            logger.error("Timeout error for postcode: " + postcode)
+            logger.error("Retrying...")
+            time.sleep(1)
+            i += 1
+            return []
 
     if "No registration details available" in response.text:
+        logger.info("No registration details available for " + simple_address)
         return {}
 
     if "This property is not in the register" in response.text:
+        logger.info("No registration details available for " + simple_address)
         return {}
 
     if response.status_code != 200:
@@ -135,11 +150,24 @@ def scrape_addresses(postcode: str, session, headers):
     postcode = postcode.replace(" ", "+")
     postcode = postcode.strip()
 
-    responsePostData = session.post("https://www.landlordregistrationscotland.gov.uk/search/postcode",
-                                    data="postcode=" + postcode, headers=headers)
+    i = 0
+    while i < 3:
+        try:
+            responsePostData = session.post("https://www.landlordregistrationscotland.gov.uk/search/postcode",
+                                            data="postcode=" + postcode, headers=headers)
+            break
+        except requests.exceptions.Timeout:
+            logger.error("Timeout error for postcode: " + postcode)
+            logger.error("Retrying...")
+            time.sleep(1)
+            i += 1
+            return []
+
     if responsePostData.status_code == 200:
         if "Postcode not found" in responsePostData.text:
+            logger.info(f"Postcode {postcode} not found")
             return []
+
         return parse_addresses(responsePostData.text)
     else:
         logger.error(f"Error: {responsePostData.status_code}")
@@ -225,9 +253,11 @@ if __name__ == "__main__":
     # Create a bounded semaphore to limit the number of concurrent threads
     semaphore = BoundedSemaphore(MAX_WORKERS)
 
+
     def worker(postcode):
         with semaphore:
             scrape_process(postcode)
+
 
     threads = []
     for postcode in postcodes:
