@@ -1,4 +1,4 @@
-# 🌍 LordScraper: Landlord Registration Scotland Data Collector
+# 🌍 LordScraper: Landlord Registration Collector
 
 <p align="center">
   A Python script that automatically retrieves and stores landlord registration data from the Landlord Registration Scotland website.
@@ -26,8 +26,8 @@
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/yourusername/LordScraper.git
-   cd LordScraper
+   git clone https://github.com/Tentoxa/LandlordScraper
+   cd LandlordScraper
    ```
 1. **Install required Python packages**:
    ```bash
