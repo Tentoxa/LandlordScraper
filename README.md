@@ -17,10 +17,12 @@
 - `curl_cffi` library for making HTTP requests
 - `fake_headers` for generating realistic user agents
 - `BeautifulSoup` for parsing HTML
-- `json` for handling JSON data
 - `urllib.parse` for URL encoding
 - `logging` for error handling and logging
 - `threading` for multithreaded scraping
+- `datetime` for timestamp generation
+- `contextlib` for concurrency management
+- `sqlite3` for database operations
 
 ## Installation
 
@@ -44,42 +46,22 @@
    ```
    
 ## Data Structure
-The collected data is stored in a JSON file named `data.json`. The structure of the JSON file is as follows:
+The database is named **`address_data.db`** and contains a single table called **`addresses`**. This table is designed to store essential information related to property addresses.
 
-```json
-{
-  "postcodes": {
-    "postcode1": [
-      {
-        "address": "Address 1",
-        "application_by": "Applicant 1",
-        "joint_owners": "Joint Owner 1, Joint Owner 2",
-        "agent_details": "Agent Details 1",
-        "local_authority": "Local Authority 1",
-        "contact_address": "Contact Address 1"
-      },
-      {
-        "address": "Address 2",
-        "application_by": "Applicant 2",
-        "joint_owners": "Joint Owner 3",
-        "agent_details": "Agent Details 2",
-        "local_authority": "Local Authority 2",
-        "contact_address": "Contact Address 2"
-      }
-    ],
-    "postcode2": [
-      {
-        "address": "Address 3",
-        "application_by": "Applicant 3",
-        "joint_owners": null,
-        "agent_details": "Agent Details 3",
-        "local_authority": "Local Authority 3",
-        "contact_address": "Contact Address 3"
-      }
-    ]
-  }
-}
-```
+### Table Structure: `addresses`
+
+| Column Name        | Data Type              | Description                                         |
+|--------------------|------------------------|-----------------------------------------------------|
+| `id`               | Integer (Auto-increment) | Unique identifier for each address record          |
+| `postcode`         | Text                   | The postcode associated with the address            |
+| `application_by`   | Text                   | The applicant for the landlord registration         |
+| `joint_owners`     | Text                   | The joint owners of the property                    |
+| `agent_details`    | Text                   | The agent details for the property                  |
+| `local_authority`  | Text                   | The local authority responsible for the property     |
+| `contact_address`   | Text                   | The contact address for the property                |
+| `address`          | Text                   | The full address of the property                    |
+| `created_at`       | Timestamp              | The timestamp when the address record was created   |
+
 
 ## License
 This project is licensed under the MIT License. See the License file for more information.

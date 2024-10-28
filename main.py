@@ -1,12 +1,13 @@
 import time
-
+import sqlite3
 from curl_cffi import requests
 from fake_headers import Headers
 from bs4 import BeautifulSoup
-import json
+from contextlib import closing
 import urllib.parse
 import logging
 from threading import Thread, BoundedSemaphore
+from datetime import datetime
 
 MAX_WORKERS = 3
 
@@ -110,10 +111,7 @@ def investigate_address(full_address: str, simple_address: str, session: request
     i = 0
     while i < 3:
         try:
-            response = session.post("https://www.landlordregistrationscotland.gov.uk/search/registration/property",
-                                    data=f"selectedAddress="
-                                         f"{encoded_address}",
-                                    headers=headers)
+            response = session.post("https://www.landlordregistrationscotland.gov.uk/search/registration/property",data=f"selectedAddress="f"{encoded_address}",headers=headers)
             break
         except requests.exceptions.Timeout:
             logger.error("Timeout error for postcode: " + postcode)
@@ -153,8 +151,7 @@ def scrape_addresses(postcode: str, session, headers):
     i = 0
     while i < 3:
         try:
-            responsePostData = session.post("https://www.landlordregistrationscotland.gov.uk/search/postcode",
-                                            data="postcode=" + postcode, headers=headers)
+            responsePostData = session.post("https://www.landlordregistrationscotland.gov.uk/search/postcode", data="postcode=" + postcode, headers=headers)
             break
         except requests.exceptions.Timeout:
             logger.error("Timeout error for postcode: " + postcode)
@@ -176,57 +173,71 @@ def scrape_addresses(postcode: str, session, headers):
             f.write(responsePostData.text)
         logger.error("Error response written to error.log")
 
+def with_database_connection(func):
+    def wrapper(*args, **kwargs):
+        with closing(sqlite3.connect('address_data.db')) as conn:
+            with conn:
+                return func(conn, *args, **kwargs)
+    return wrapper
 
-def add_to_json(postcode, address_details):
-    data = {
-        "postcodes": {}
-    }
+
+@with_database_connection
+def add_to_database(conn, postcode, address_details):
+    cursor = conn.cursor()
 
     try:
-        # Load existing JSON data, if available
-        with open("data.json", "r") as file:
-            data = json.load(file)
-    except FileNotFoundError:
-        # Create a new JSON file if it doesn't exist
-        with open("data.json", "w") as file:
-            json.dump(data, file, indent=2)
-
-        with open("data.json", "r") as file:
-            data = json.load(file)
-
-    # Check if the postcode key exists, and create it if not
-    if postcode not in data["postcodes"]:
-        data["postcodes"][postcode] = []
-
-    # Check for duplicates based on the address
-    if not any(existing['address'] == address_details['address'] for existing in data["postcodes"][postcode]):
-        data["postcodes"][postcode].append(address_details)
-
-    # Write the updated data back to the JSON file
-    with open("data.json", "w") as file:
-        json.dump(data, file, indent=2)
-
-    return data
+        # Insert the address details into the table
+        cursor.execute("INSERT INTO addresses (postcode, application_by, joint_owners, agent_details, local_authority, contact_address, address, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", (
+            postcode,
+            address_details['application_by'],
+            address_details['joint_owners'],
+            address_details['agent_details'],
+            address_details['local_authority'],
+            address_details['contact_address'],
+            address_details['address'],
+            datetime.now()
+        ))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        # Address already exists in the database
+        logger.info(f"Address already in database: {address_details['address']}")
 
 
-def scrape_process(postcode):
-    logger.info(f"Scraping postcode: {postcode}")
-    session = requests.Session(impersonate="chrome")
-    headers = header.generate()
-    headers["Content-Type"] = "application/x-www-form-urlencoded"
+@with_database_connection
+def is_address_in_database(conn, postcode, address):
+    cursor = conn.cursor()
 
-    addresses = scrape_addresses(postcode, session, headers)
-    logger.info(f"Found {len(addresses)} addresses for postcode {postcode}")
+    # Check if the address is in the database
+    cursor.execute("SELECT * FROM addresses WHERE postcode = ? AND address = ?", (postcode, address))
+    result = cursor.fetchone()
 
-    for address in addresses:
-        logger.info(f"Investigating address: {address['address']}")
-        address_details = investigate_address(address['full_address'], address["address"], session, headers)
+    return result is not None
 
-        if address_details:
-            logger.info(f"Found details for address: {address_details}")
 
-            add_to_json(postcode, address_details)
+@with_database_connection
+def count_data(conn):
+    cursor = conn.cursor()
 
+    # Count the number of postcodes and addresses
+    cursor.execute("SELECT COUNT(DISTINCT postcode) FROM addresses")
+    postcode_count = cursor.fetchone()[0]
+
+    cursor.execute("SELECT COUNT(*) FROM addresses")
+    address_count = cursor.fetchone()[0]
+
+    return postcode_count, address_count
+
+
+@with_database_connection
+def get_last_postcode(conn):
+    cursor = conn.cursor()
+
+    # Get the last postcode
+    cursor.execute("SELECT postcode FROM addresses ORDER BY postcode DESC LIMIT 1")
+    result = cursor.fetchone()
+    last_postcode = result[0] if result else None
+
+    return last_postcode
 
 def parse_input_entry(entry):
     if entry.find('"') != -1:
@@ -245,6 +256,23 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
     logger = logging.getLogger(__name__)
 
+    logger.info("Starting LordScraper")
+
+    # Create the SQLite3 database and table with a unique constraint on the address column
+    with closing(sqlite3.connect('address_data.db')) as conn:
+        cursor = conn.cursor()
+        cursor.execute('''CREATE TABLE IF NOT EXISTS addresses
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT, postcode TEXT, application_by TEXT, joint_owners TEXT, agent_details TEXT, local_authority TEXT, contact_address TEXT, address TEXT UNIQUE, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
+        conn.commit()
+
+    postcodes, addresses = count_data()
+    logger.info(f"Found {postcodes} postcodes and {addresses} addresses in the database")
+    logger.info(f"Last postcode in the database: {get_last_postcode()}")
+
+    logger.info("Press Enter to start scraping")
+
+    input()
+
     with open("postcodes.txt", "r") as f:
         postcodes = [parse_input_entry(postcode) for postcode in f.readlines()]
 
@@ -257,6 +285,26 @@ if __name__ == "__main__":
     def worker(postcode):
         with semaphore:
             scrape_process(postcode)
+
+
+    def scrape_process(postcode):
+        logger.info(f"Scraping postcode: {postcode}")
+        session = requests.Session(impersonate="chrome")
+        headers = header.generate()
+        headers["Content-Type"] = "application/x-www-form-urlencoded"
+
+        addresses = scrape_addresses(postcode, session, headers)
+        logger.info(f"Found {len(addresses)} addresses for postcode {postcode}")
+
+        for address in addresses:
+            if is_address_in_database(postcode, address["address"]):
+                continue
+            logger.info(f"Investigating address: {address['address']}")
+            address_details = investigate_address(address['full_address'], address["address"], session, headers)
+
+            if address_details:
+                logger.info(f"Found details for address: {address_details}")
+                add_to_database(postcode, address_details)
 
 
     threads = []
